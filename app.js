@@ -9,6 +9,8 @@ const DAILY_VERB_COUNT = 10;
 const DAILY_START = "2026-10-04";
 const POINTS_PER_CORRECT = 10;
 const USERNAME_KEY = "username";
+const MISTAKES_KEY = "mistakes";
+const CLEARS_REQUIRED = 3;
 const LEVEL_RANK = { A1: 0, A2: 1, B1: 2, B2: 3, C1: 4, C2: 5 };
 
 const supabase = isSupabaseConfigured()
@@ -21,6 +23,7 @@ let sentenceIndex = 0;
 let mode = "practice";
 let dailyQuestions = [];
 let dailyQuestionIndex = 0;
+let mistakeQueue = [];
 let score = 0;
 let username = "";
 
@@ -33,12 +36,14 @@ const currentUsernameEl = document.getElementById("current-username");
 const changeNameBtn = document.getElementById("change-name");
 const dailyBtn = document.getElementById("daily-btn");
 const practiceBtn = document.getElementById("practice-btn");
+const mistakesBtn = document.getElementById("mistakes-btn");
 const quizContainer = document.getElementById("quiz-container");
 const quitBtn = document.getElementById("quit-btn");
 const scoreLine = document.getElementById("score-line");
 const verbPromptEl = document.getElementById("verb-prompt");
 const sentenceProgressEl = document.getElementById("sentence-progress");
 const sentencePromptEl = document.getElementById("sentence-prompt");
+const quizHintEl = document.getElementById("quiz-hint");
 const formEl = document.getElementById("answer-form");
 const inputEl = document.getElementById("user-input");
 const feedbackEl = document.getElementById("feedback");
@@ -73,9 +78,7 @@ function levelRank(level) {
 }
 
 function sortVerbsByLevel(list) {
-  return list
-    .slice()
-    .sort((a, b) => levelRank(a.level) - levelRank(b.level));
+  return list.slice().sort((a, b) => levelRank(a.level) - levelRank(b.level));
 }
 
 function daysSinceDailyStart(date) {
@@ -118,8 +121,7 @@ function pickDailyVerbs(list, date, count) {
   if (!list.length) return [];
 
   const windows = Math.ceil(list.length / count);
-  const day =
-    ((daysSinceDailyStart(date) % windows) + windows) % windows;
+  const day = ((daysSinceDailyStart(date) % windows) + windows) % windows;
   const start = day * count;
   const picked = [];
 
@@ -166,6 +168,58 @@ function buildDailyQuestions(pickedVerbs, date) {
   return questions;
 }
 
+function mistakeId(verb, index) {
+  return `${verb.infinitive}:${index}`;
+}
+
+function loadMistakes() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(MISTAKES_KEY) || "{}");
+    return saved && typeof saved === "object" ? saved : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveMistakes(mistakes) {
+  localStorage.setItem(MISTAKES_KEY, JSON.stringify(mistakes));
+}
+
+function recordMistake(verb, index) {
+  const mistakes = loadMistakes();
+  const id = mistakeId(verb, index);
+  mistakes[id] = {
+    infinitive: verb.infinitive,
+    sentenceIndex: index,
+    correctStreak: 0,
+  };
+  saveMistakes(mistakes);
+}
+
+function recordCorrectMistake(verb, index) {
+  const mistakes = loadMistakes();
+  const id = mistakeId(verb, index);
+  const entry = mistakes[id];
+  if (!entry) return null;
+
+  entry.correctStreak += 1;
+  if (entry.correctStreak >= CLEARS_REQUIRED) {
+    delete mistakes[id];
+    saveMistakes(mistakes);
+    return { cleared: true, streak: CLEARS_REQUIRED };
+  }
+
+  saveMistakes(mistakes);
+  return { cleared: false, streak: entry.correctStreak };
+}
+
+function updateMistakesButton() {
+  const count = Object.keys(loadMistakes()).length;
+  mistakesBtn.disabled = count === 0;
+  mistakesBtn.textContent =
+    count === 0 ? "Practice mistakes" : `Practice mistakes (${count})`;
+}
+
 function cleanUsername(value) {
   return value.trim().replace(/\s+/g, " ").slice(0, 32);
 }
@@ -202,6 +256,7 @@ function showScreen(screen) {
 
 function showHome() {
   currentUsernameEl.textContent = username;
+  updateMistakesButton();
   showScreen(homeEl);
 }
 
@@ -261,6 +316,7 @@ function explainPrompt(sentence) {
 function resetAnswerUi() {
   inputEl.value = "";
   inputEl.disabled = false;
+  formEl.classList.remove("hidden");
   formEl.querySelector("button").classList.remove("hidden");
   feedbackEl.classList.add("hidden");
   aiLinksEl.classList.add("hidden");
@@ -279,12 +335,19 @@ function showCurrentSentence() {
     sentenceProgressEl.textContent = `${dailyQuestionNumber()} / ${dailyQuestionTotal()}`;
     scoreLine.textContent = `Score: ${score}`;
     scoreLine.classList.remove("hidden");
+  } else if (mode === "mistakes") {
+    const saved = loadMistakes()[mistakeId(currentVerb, sentenceIndex)];
+    const streak = saved?.correctStreak ?? 0;
+    sentenceProgressEl.textContent = `${Object.keys(loadMistakes()).length} saved`;
+    scoreLine.textContent = `Streak: ${streak} / ${CLEARS_REQUIRED}`;
+    scoreLine.classList.remove("hidden");
   } else {
     sentenceProgressEl.textContent = `${sentenceIndex + 1} / ${SENTENCE_COUNT}`;
     scoreLine.classList.add("hidden");
   }
 
   renderSentence(sentence);
+  quizHintEl.classList.remove("hidden");
   resetAnswerUi();
 }
 
@@ -342,6 +405,52 @@ async function startDaily() {
   }
 }
 
+function startMistakes() {
+  const mistakes = loadMistakes();
+  mistakeQueue = shuffle(Object.keys(mistakes), Math.random);
+  mode = "mistakes";
+  showScreen(quizContainer);
+  showNextMistake();
+}
+
+function showNextMistake() {
+  const mistakes = loadMistakes();
+
+  while (mistakeQueue.length) {
+    const id = mistakeQueue.shift();
+    const entry = mistakes[id];
+    if (!entry) continue;
+
+    const verb = verbs.find((item) => item.infinitive === entry.infinitive);
+    if (
+      !verb ||
+      entry.sentenceIndex < 0 ||
+      entry.sentenceIndex >= SENTENCE_COUNT
+    ) {
+      delete mistakes[id];
+      saveMistakes(mistakes);
+      continue;
+    }
+
+    currentVerb = verb;
+    sentenceIndex = entry.sentenceIndex;
+    showCurrentSentence();
+    return;
+  }
+
+  verbPromptEl.textContent = "All clear";
+  sentenceProgressEl.textContent = "0 saved";
+  sentencePromptEl.textContent =
+    "You answered every saved mistake correctly three times.";
+  quizHintEl.classList.add("hidden");
+  scoreLine.classList.add("hidden");
+  formEl.classList.add("hidden");
+  feedbackEl.classList.add("hidden");
+  aiLinksEl.classList.add("hidden");
+  translateLinkEl.classList.add("hidden");
+  nextBtn.classList.add("hidden");
+}
+
 function showDailyQuestion() {
   const question = dailyQuestions[dailyQuestionIndex];
   currentVerb = question.verb;
@@ -350,6 +459,11 @@ function showDailyQuestion() {
 }
 
 function goToNext() {
+  if (mode === "mistakes") {
+    showNextMistake();
+    return;
+  }
+
   if (mode === "daily") {
     if (dailyQuestionIndex < dailyQuestions.length - 1) {
       dailyQuestionIndex += 1;
@@ -461,6 +575,7 @@ changeNameBtn.addEventListener("click", () => {
 });
 
 practiceBtn.addEventListener("click", startPractice);
+mistakesBtn.addEventListener("click", startMistakes);
 dailyBtn.addEventListener("click", () => {
   startDaily();
 });
@@ -483,6 +598,20 @@ formEl.addEventListener("submit", (event) => {
     scoreLine.textContent = `Score: ${score}`;
   }
 
+  let mistakeResult = null;
+  if (correct) {
+    mistakeResult = recordCorrectMistake(currentVerb, sentenceIndex);
+  } else {
+    recordMistake(currentVerb, sentenceIndex);
+    if (mode === "mistakes") {
+      mistakeQueue.push(mistakeId(currentVerb, sentenceIndex));
+    }
+  }
+
+  if (mode === "mistakes" && mistakeResult && !mistakeResult.cleared) {
+    mistakeQueue.push(mistakeId(currentVerb, sentenceIndex));
+  }
+
   feedbackEl.classList.remove("hidden");
   chatgptLinkEl.href = `https://chatgpt.com/?q=${encodedPrompt}`;
   aiLinksEl.classList.remove("hidden");
@@ -491,11 +620,22 @@ formEl.addEventListener("submit", (event) => {
 
   if (correct) {
     const points = mode === "daily" ? " +10." : "";
-    showFeedback(`Correct!${points} ${answer}`, "correct");
+    const streakNote =
+      mode === "mistakes" && mistakeResult
+        ? mistakeResult.cleared
+          ? " Removed from mistakes."
+          : ` ${mistakeResult.streak}/${CLEARS_REQUIRED}.`
+        : "";
+    showFeedback(`Correct!${points}${streakNote} ${answer}`, "correct");
   } else if (userAnswer === participe) {
-    showFeedback(`Almost! Don't forget the auxiliary: ${answer}`, "incorrect");
+    const reset = mode === "mistakes" ? ". Streak reset." : "";
+    showFeedback(
+      `Almost! Don't forget the auxiliary: ${answer}${reset}`,
+      "incorrect",
+    );
   } else {
-    showFeedback(`Incorrect. The answer is: ${answer}`, "incorrect");
+    const reset = mode === "mistakes" ? ". Streak reset." : "";
+    showFeedback(`Incorrect. The answer is: ${answer}${reset}`, "incorrect");
   }
 
   inputEl.disabled = true;
@@ -506,10 +646,13 @@ formEl.addEventListener("submit", (event) => {
     return;
   }
 
-  nextBtn.textContent =
-    mode === "daily" || sentenceIndex < SENTENCE_COUNT - 1
-      ? "Next sentence →"
-      : "Next verb →";
+  if (mode === "mistakes") {
+    nextBtn.textContent = mistakeQueue.length ? "Next mistake →" : "Done";
+  } else if (mode === "daily" || sentenceIndex < SENTENCE_COUNT - 1) {
+    nextBtn.textContent = "Next sentence →";
+  } else {
+    nextBtn.textContent = "Next verb →";
+  }
 
   nextBtn.classList.remove("hidden");
   nextBtn.focus();
