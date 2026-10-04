@@ -12,7 +12,45 @@
 
       <div id="loading">Loading verbs...</div>
 
+      <section id="username-screen" class="card hidden">
+        <p>Choose a name for the daily leaderboard.</p>
+        <form id="username-form" class="stack-form">
+          <input
+            id="username-input"
+            maxlength="32"
+            placeholder="Your name"
+            autocomplete="nickname"
+            required
+          />
+          <button type="submit">Continue</button>
+        </form>
+      </section>
+
+      <section id="home" class="hidden">
+        <p class="player-line">
+          Playing as <strong id="current-username"></strong>
+        </p>
+        <button type="button" id="change-name" class="text-btn">
+          Change name
+        </button>
+        <div class="mode-actions">
+          <button type="button" id="daily-btn">Daily challenge</button>
+          <button type="button" id="practice-btn" class="outline-btn">
+            Free practice
+          </button>
+        </div>
+        <p class="hint">
+          The daily challenge is 10 verbs and 30 sentences. Everyone gets the
+          same set today.
+        </p>
+      </section>
+
       <div id="quiz-container" class="hidden">
+        <div class="quiz-toolbar">
+          <button type="button" id="quit-btn" class="text-btn">Home</button>
+          <p id="score-line" class="score-line hidden">Score: 0</p>
+        </div>
+
         <div class="question-card">
           <p class="meta">
             <span id="verb-prompt">...</span>
@@ -66,7 +104,17 @@
           Next sentence &rarr;
         </button>
       </div>
+
+      <section id="leaderboard" class="card hidden">
+        <h2>Today's leaderboard</h2>
+        <p id="leaderboard-date" class="hint"></p>
+        <p id="leaderboard-status"></p>
+        <ol id="leaderboard-list"></ol>
+        <button type="button" id="leaderboard-home" class="outline-btn">
+          Home
+        </button>
+      </section>
     </main>
-    <script src="app.js"></script>
+    <script type="module" src="app.js"></script>
   </body>
 </html>
